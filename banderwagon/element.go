@@ -155,6 +155,42 @@ func ElementsToBytesUncompressed(elements []*Element) []SerializedPoint {
 	return uncompressedPoints
 }
 
+// Serialises multiple group elements using a batch multi inversion
+func ElementsToBytesCompressed(elements []*Element) []SerializedPointCompressed {
+	// Collect all z co-ordinates
+	zs := make([]fp.Element, len(elements))
+	for i := 0; i < int(len(elements)); i++ {
+		zs[i] = elements[i].inner.Z
+	}
+
+	// Invert z co-ordinates
+	zInvs := fp.BatchInvert(zs)
+
+	compressedPoints := make([]SerializedPointCompressed, len(elements))
+	// uncompressedPoints := make([]SerializedPoint, len(elements))
+
+	// Multiply x and y by zInv
+	for i := 0; i < int(len(elements)); i++ {
+		var X fp.Element
+		var Y fp.Element
+
+		element := elements[i]
+
+		X.Mul(&element.inner.X, &zInvs[i])
+		Y.Mul(&element.inner.Y, &zInvs[i])
+
+		// Serialisation takes the x co-ordinate and multiplies it by the sign of y
+		if !Y.LexicographicallyLargest() {
+			X.Neg(&X)
+		}
+
+		a := X.Bytes()
+		compressedPoints[i] = a[:]
+	}
+
+	return compressedPoints
+}
+
 // computes X/Y
 func (p Element) mapToBaseField() fp.Element {
 	var res fp.Element
