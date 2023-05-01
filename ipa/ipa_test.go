@@ -25,8 +25,6 @@ func TestIPAProofCreateVerify(t *testing.T) {
 	prover_transcript := common.NewTranscript("ipa")
 
 	proof := CreateIPAProof(prover_transcript, ipaConf, prover_comm, poly, point)
-	lagrange_coeffs := ipaConf.PrecomputedWeights.ComputeBarycentricCoefficients(point)
-	inner_product := InnerProd(poly, lagrange_coeffs)
 
 	test_serialize_deserialize_proof(proof)
 
@@ -34,6 +32,8 @@ func TestIPAProofCreateVerify(t *testing.T) {
 	verifier_comm := prover_comm // In reality, the verifier will rebuild this themselves
 	verifier_transcript := common.NewTranscript("ipa")
 
+	lagrange_coeffs := ipaConf.PrecomputedWeights.ComputeBarycentricCoefficients(point)
+	inner_product := InnerProd(poly, lagrange_coeffs)
 	ok := CheckIPAProof(verifier_transcript, ipaConf, verifier_comm, proof, point, inner_product)
 	if !ok {
 		panic("inner product proof failed")
