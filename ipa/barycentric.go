@@ -156,7 +156,7 @@ func (preComp *PrecomputedWeights) DivideOnDomain(index uint8, f []fr.Element) [
 			weightRatio := preComp.getRatioOfWeights(int(index), i)
 			var tmp fr.Element
 			tmp.Mul(&weightRatio, &quotient[i])
-			quotient[index].Sub(&quotient[index], &tmp)
+			quotient[index].Sub(&quotient[index], &tmp) // tmp denominator is the negative of what we want.
 		}
 	}
 

@@ -3,15 +3,17 @@ package common
 import (
 	"crypto/sha256"
 	"hash"
+	"time"
 
 	"github.com/crate-crypto/go-ipa/bandersnatch/fr"
 	"github.com/crate-crypto/go-ipa/banderwagon"
 )
 
-/// The transcript is used to create challenge scalars.
-/// See: Fiat-Shamir
+// / The transcript is used to create challenge scalars.
+// / See: Fiat-Shamir
 type Transcript struct {
-	state hash.Hash
+	state      hash.Hash
+	timestamps []time.Time
 }
 
 func NewTranscript(label string) *Transcript {
@@ -79,4 +81,12 @@ func (t *Transcript) ChallengeScalar(label string) fr.Element {
 
 	// Return the new challenge
 	return tmp
+}
+
+func (t *Transcript) Timestamp() {
+	t.timestamps = append(t.timestamps, time.Now())
+}
+
+func (t *Transcript) GetTimestamps() []time.Time {
+	return t.timestamps
 }

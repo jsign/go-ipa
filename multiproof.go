@@ -32,6 +32,7 @@ func CreateMultiProof(transcript *common.Transcript, ipaConf *ipa.IPAConfig, Cs 
 		panic("cannot create a multiproof with 0 queries")
 	}
 
+	transcript.Timestamp()
 	for i := 0; i < num_queries; i++ {
 		transcript.AppendPoint(Cs[i], "C")
 		var z = domainToFr(zs[i])
@@ -44,7 +45,9 @@ func CreateMultiProof(transcript *common.Transcript, ipaConf *ipa.IPAConfig, Cs 
 		transcript.AppendScalar(&y, "y")
 	}
 	r := transcript.ChallengeScalar("r")
+
 	powers_of_r := common.PowersOf(r, num_queries)
+	transcript.Timestamp() // Milestone 1.
 
 	// Compute g(X)
 	g_x := make([]fr.Element, common.POLY_DEGREE)
@@ -65,6 +68,7 @@ func CreateMultiProof(transcript *common.Transcript, ipaConf *ipa.IPAConfig, Cs 
 	}
 
 	D := ipaConf.Commit(g_x)
+	transcript.Timestamp() // Milestone 3.
 
 	transcript.AppendPoint(&D, "D")
 	t := transcript.ChallengeScalar("t")
@@ -91,19 +95,20 @@ func CreateMultiProof(transcript *common.Transcript, ipaConf *ipa.IPAConfig, Cs 
 		}
 	}
 
+	E := ipaConf.Commit(h_x)
+	transcript.AppendPoint(&E, "E")
+	transcript.Timestamp() // Milestone 4.
+
 	h_minus_g := make([]fr.Element, common.POLY_DEGREE)
 	for i := 0; i < common.POLY_DEGREE; i++ {
 		h_minus_g[i].Sub(&h_x[i], &g_x[i])
 	}
-
-	E := ipaConf.Commit(h_x)
-	transcript.AppendPoint(&E, "E")
-
 	var E_minus_D banderwagon.Element
-
 	E_minus_D.Sub(&E, &D)
+	transcript.Timestamp() // Milestone 5.
 
 	ipa_proof := ipa.CreateIPAProof(transcript, ipaConf, E_minus_D, h_minus_g, t)
+	transcript.Timestamp() // Milestone 6.
 
 	return &MultiProof{
 		IPA: ipa_proof,
@@ -128,6 +133,7 @@ func CheckMultiProof(transcript *common.Transcript, ipaConf *ipa.IPAConfig, proo
 		panic("cannot create a multiproof with no data")
 	}
 
+	transcript.Timestamp()
 	for i := 0; i < num_queries; i++ {
 		transcript.AppendPoint(Cs[i], "C")
 		var z = domainToFr(zs[i])
@@ -136,6 +142,7 @@ func CheckMultiProof(transcript *common.Transcript, ipaConf *ipa.IPAConfig, proo
 	}
 	r := transcript.ChallengeScalar("r")
 	powers_of_r := common.PowersOf(r, num_queries)
+	transcript.Timestamp()
 
 	transcript.AppendPoint(&proof.D, "D")
 	t := transcript.ChallengeScalar("t")
@@ -154,6 +161,7 @@ func CheckMultiProof(transcript *common.Transcript, ipaConf *ipa.IPAConfig, proo
 		helper_scalars[i].Inverse(&helper_scalars[i])
 		helper_scalars[i].Mul(&helper_scalars[i], &r)
 	}
+	transcript.Timestamp()
 
 	// Compute g_2(t) = SUM y_i * (r^i / t - z_i) = SUM y_i * helper_scalars
 	g_2_t := fr.Zero()
@@ -162,6 +170,7 @@ func CheckMultiProof(transcript *common.Transcript, ipaConf *ipa.IPAConfig, proo
 		tmp.Mul(ys[i], &helper_scalars[i])
 		g_2_t.Add(&g_2_t, &tmp)
 	}
+	transcript.Timestamp()
 
 	// Compute E = SUM C_i * (r^i / t - z_i) = SUM C_i * helper_scalars
 	var E banderwagon.Element
@@ -172,7 +181,9 @@ func CheckMultiProof(transcript *common.Transcript, ipaConf *ipa.IPAConfig, proo
 		E.Add(&E, &tmp)
 	}
 	transcript.AppendPoint(&E, "E")
+	transcript.Timestamp()
 
+	defer transcript.Timestamp()
 	var E_minus_D banderwagon.Element
 	E_minus_D.Sub(&E, &proof.D)
 
