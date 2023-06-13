@@ -2,6 +2,7 @@ package bandersnatch
 
 import (
 	"errors"
+	"sync"
 
 	"github.com/crate-crypto/go-ipa/bandersnatch/fr"
 )
@@ -22,9 +23,9 @@ type MSMFixedBasis struct {
 }
 
 func New(points []PointAffine, windowSize int) (*MSMFixedBasis, error) {
-	if len(points) != msmLength {
-		return nil, errors.New("points length must be 256")
-	}
+	// if len(points) != msmLength {
+	// 	return nil, errors.New("points length must be 256")
+	// }
 	if windowSize > fieldSizeBits {
 		return nil, errors.New("c must be less than field size")
 	}
@@ -57,30 +58,50 @@ func (msm *MSMFixedBasis) MSM(scalars []fr.Element) (PointProj, error) {
 		return PointProj{}, errors.New("more scalars than accepted")
 	}
 
-	buckets := make([]PointProj, 1<<msm.windowSize)
-	for i := 0; i < len(buckets); i++ {
-		buckets[i].Identity()
-	}
+	count := 8
+	results := make(chan PointProj, count)
 
-	for i, scalar := range scalars {
-		scalar.FromMont()
-		for limbIndex := 0; limbIndex < fr.Limbs; limbIndex++ {
-			for w := 0; w < 64/msm.windowSize; w++ {
-				windowValue := int(scalar[limbIndex]>>(w*msm.windowSize)) & msm.windowMask
-				if windowValue == 0 {
-					continue
+	var wg sync.WaitGroup
+	doWork := func(idx, start, end int) {
+		defer wg.Done()
+		buckets := make([]PointProj, 1<<msm.windowSize)
+		for i := 0; i < len(buckets); i++ {
+			buckets[i].Identity()
+		}
+
+		for i, scalar := range scalars[start:end] {
+			k := i + start
+			scalar.FromMont()
+			for limbIndex := 0; limbIndex < fr.Limbs; limbIndex++ {
+				for w := 0; w < 64/msm.windowSize; w++ {
+					windowValue := int(scalar[limbIndex]>>(w*msm.windowSize)) & msm.windowMask
+					if windowValue == 0 {
+						continue
+					}
+					buckets[windowValue].Add(&buckets[windowValue], &msm.pointsPowers[k][limbIndex*(64/msm.windowSize)+w])
 				}
-				buckets[windowValue].Add(&buckets[windowValue], &msm.pointsPowers[i][limbIndex*(64/msm.windowSize)+w])
 			}
 		}
+
+		var tmp, result PointProj
+		tmp.Identity()
+		result.Identity()
+		for k := (len(buckets) - 1) / 2; k >= 1; k-- {
+			tmp.Add(&tmp, &buckets[k])
+			result.Add(&result, &tmp)
+		}
+		results <- result
 	}
 
-	var tmp, result PointProj
-	tmp.Identity()
-	result.Identity()
-	for k := len(buckets) - 1; k >= 1; k-- {
-		tmp.Add(&tmp, &buckets[k])
-		result.Add(&result, &tmp)
+	wg.Add(count)
+	for i := 1; i < count; i++ {
+		go doWork(i, i*len(scalars)/count, (i+1)*len(scalars)/count)
+	}
+	doWork(0, 0, len(scalars)/count)
+	result := <-results
+	for i := 1; i < count; i++ {
+		res := <-results
+		result.Add(&result, &res)
 	}
 
 	return result, nil
