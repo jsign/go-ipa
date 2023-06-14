@@ -15,59 +15,91 @@ import (
 func TestCorrectness(t *testing.T) {
 	t.Parallel()
 
-	msmLength := 32
+	msmLength := 256
 	points := GenerateRandomPoints(uint64(msmLength))
 
-	for i := 0; i < 10; i++ {
-		// Generate random scalars.
-		scalars := make([]fr.Element, msmLength)
-		for i := 0; i < len(scalars); i++ {
-			scalars[i].SetRandom()
-		}
+	windowSize := []int{2, 4, 8}
+	for _, w := range windowSize {
+		for i := 0; i < 10; i++ {
+			// Generate random scalars.
+			scalars := make([]fr.Element, msmLength)
+			for i := 0; i < len(scalars); i++ {
+				scalars[i].SetRandom()
+			}
 
-		// MSM custom result.
-		msmEngine, err := bandersnatch.New(points, 8)
-		if err != nil {
-			t.Fatalf("error in msm engine: %v", err)
-		}
-		now := time.Now()
-		result, err := msmEngine.MSM(scalars)
-		if err != nil {
-			t.Fatalf("error in msm multiexp: %v", err)
-		}
-		fmt.Printf("jsign impl %v\n", time.Since(now))
+			// MSM custom result.
+			msmEngine, err := bandersnatch.New(points, w)
+			if err != nil {
+				t.Fatalf("error in msm engine: %v", err)
+			}
+			now := time.Now()
+			result, err := msmEngine.MSM(scalars)
+			if err != nil {
+				t.Fatalf("error in msm multiexp: %v", err)
+			}
+			fmt.Printf("jsign impl %v\n", time.Since(now))
 
-		// Gnark result.
-		var gnarkResult bandersnatch.PointProj
-		now = time.Now()
-		_, err = gnarkResult.MultiExp(points, scalars, bandersnatch.MultiExpConfig{ScalarsMont: true})
-		if err != nil {
-			t.Fatalf("error in gnark multiexp: %v", err)
-		}
-		fmt.Printf("gnark impl %v\n\n", time.Since(now))
+			// Gnark result.
+			var gnarkResult bandersnatch.PointProj
+			now = time.Now()
+			_, err = gnarkResult.MultiExp(points, scalars, bandersnatch.MultiExpConfig{ScalarsMont: true})
+			if err != nil {
+				t.Fatalf("error in gnark multiexp: %v", err)
+			}
+			fmt.Printf("gnark impl %v\n\n", time.Since(now))
 
-		// if !result.Equal(&gnarkResult) {
-		// 	t.Fatalf("msm result does not match gnark result")
-		// }
-		_ = result
+			if !result.Equal(&gnarkResult) {
+				t.Fatalf("msm result does not match gnark result")
+			}
+			_ = result
+		}
 	}
 }
 
 func BenchmarkCustomMSM(b *testing.B) {
+	windowSize := []int{2, 4, 8}
+	msmLength := []int{1, 2, 4, 8, 16, 32, 64, 128, 256}
 	points := GenerateRandomPoints(256)
 	// Generate random scalars.
-	scalars := make([]fr.Element, 256)
+	scalars := make([]fr.Element, len(points))
 	for i := 0; i < len(scalars); i++ {
 		scalars[i].SetRandom()
 	}
-	msmEngine, _ := bandersnatch.New(points, 8)
+	for _, k := range msmLength {
+		b.Run(fmt.Sprintf("size=%d", k), func(b *testing.B) {
+			for _, w := range windowSize {
+				b.Run(fmt.Sprintf("w=%d", w), func(b *testing.B) {
+					msmEngine, _ := bandersnatch.New(points, w)
 
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = msmEngine.MSM(scalars)
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						_, _ = msmEngine.MSM(scalars[:k])
+					}
+				})
+			}
+		})
 	}
 }
+
+// func BenchmarkMSMPrecomp(b *testing.B) {
+// 	config := ipa.NewIPASettings()
+// 	pl := banderwagon.NewPrecomputeLagrange(config.SRSPrecompPoints.SRS)
+
+// 	for _, k := range []int{1, 2, 4, 8, 16, 32, 64, 128, 256} {
+// 		b.Run(fmt.Sprintf("for %d elements", k), func(b *testing.B) {
+// 			evals := make([]fr.Element, k)
+// 			for i := range evals {
+// 				evals[i].SetRandom()
+// 			}
+
+// 			b.ResetTimer()
+// 			for i := 0; i < b.N; i++ {
+// 				pl.Commit(evals)
+// 			}
+// 		})
+// 	}
+// }
 
 func GenerateRandomPoints(numPoints uint64) []bandersnatch.PointAffine {
 	seed := "eth_verkle_oct_2021"

@@ -19,13 +19,13 @@ type MSMFixedBasis struct {
 	numWindows int
 
 	// pointsPowers are the pointsPowers with their powers. pointsPowers[i][j] = pointsPowers[i] * 2^(windowSize * j).
-	pointsPowers [msmLength][]PointProj
+	pointsPowers [msmLength][]PointAffine
 }
 
 func New(points []PointAffine, windowSize int) (*MSMFixedBasis, error) {
-	// if len(points) != msmLength {
-	// 	return nil, errors.New("points length must be 256")
-	// }
+	if len(points) > msmLength {
+		return nil, errors.New("max msm length is 256")
+	}
 	if windowSize > fieldSizeBits {
 		return nil, errors.New("c must be less than field size")
 	}
@@ -34,10 +34,10 @@ func New(points []PointAffine, windowSize int) (*MSMFixedBasis, error) {
 	// Compute the powers of the points.
 	var frQ fr.Element
 	frQ.SetUint64(1 << windowSize)
-	var pointsPowers [msmLength][]PointProj
+	var pointsPowers [msmLength][]PointAffine
 	for i := range points {
-		pointsPowers[i] = make([]PointProj, numWindows)
-		pointsPowers[i][0].FromAffine(&points[i])
+		pointsPowers[i] = make([]PointAffine, numWindows)
+		pointsPowers[i][0] = points[i]
 		for j := 1; j < len(pointsPowers[i]); j++ {
 			pointsPowers[i][j].ScalarMul(&pointsPowers[i][j-1], &frQ)
 		}
@@ -58,7 +58,8 @@ func (msm *MSMFixedBasis) MSM(scalars []fr.Element) (PointProj, error) {
 		return PointProj{}, errors.New("more scalars than accepted")
 	}
 
-	count := 8
+	const workPerRoutine = 16
+	count := (len(scalars) + workPerRoutine - 1) / workPerRoutine
 	results := make(chan PointProj, count)
 
 	var wg sync.WaitGroup
@@ -78,7 +79,7 @@ func (msm *MSMFixedBasis) MSM(scalars []fr.Element) (PointProj, error) {
 					if windowValue == 0 {
 						continue
 					}
-					buckets[windowValue].Add(&buckets[windowValue], &msm.pointsPowers[k][limbIndex*(64/msm.windowSize)+w])
+					buckets[windowValue].MixedAdd(&buckets[windowValue], &msm.pointsPowers[k][limbIndex*(64/msm.windowSize)+w])
 				}
 			}
 		}
@@ -86,8 +87,10 @@ func (msm *MSMFixedBasis) MSM(scalars []fr.Element) (PointProj, error) {
 		var tmp, result PointProj
 		tmp.Identity()
 		result.Identity()
-		for k := (len(buckets) - 1) / 2; k >= 1; k-- {
-			tmp.Add(&tmp, &buckets[k])
+		for k := len(buckets) - 1; k >= 1; k-- {
+			if !buckets[k].IsIdentity() {
+				tmp.Add(&tmp, &buckets[k])
+			}
 			result.Add(&result, &tmp)
 		}
 		results <- result
