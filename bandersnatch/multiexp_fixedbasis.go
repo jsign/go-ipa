@@ -9,9 +9,14 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const numPrecomputedPoints = 5
-const pipperMsmLength = 256 - numPrecomputedPoints
-const fieldSizeBits = 256
+const (
+	precompNumPoints  = 5
+	precompWindowSize = 16
+	precompNumWindows = 256 / precompWindowSize
+
+	pipperMsmLength = 256 - precompNumPoints
+	fieldSizeBits   = 256
+)
 
 type MSMFixedBasis struct {
 	// windowSize is the number of bits in the window (e.g: 8).
@@ -23,11 +28,11 @@ type MSMFixedBasis struct {
 
 	// pointsPowers are the pointsPowers with their powers. pointsPowers[i][j] = pointsPowers[i] * 2^(windowSize * j).
 	pointsPowers     [pipperMsmLength][]PointAffine
-	firstFivePrecomp [5][16][1 << 16]PointAffine
+	firstFivePrecomp [precompNumPoints][precompNumWindows][1 << precompWindowSize]PointAffine
 }
 
 func New(points []PointAffine, windowSize int) (*MSMFixedBasis, error) {
-	if len(points) > numPrecomputedPoints+pipperMsmLength {
+	if len(points) > precompNumPoints+pipperMsmLength {
 		return nil, errors.New("max msm length is 256")
 	}
 	if windowSize > fieldSizeBits {
@@ -39,9 +44,9 @@ func New(points []PointAffine, windowSize int) (*MSMFixedBasis, error) {
 	var frQ fr.Element
 	frQ.SetUint64(1 << windowSize)
 	var pointsPowers [pipperMsmLength][]PointAffine
-	for i := range points[5:] {
+	for i := range points[precompNumPoints:] {
 		pointsPowers[i] = make([]PointAffine, numWindows)
-		pointsPowers[i][0] = points[i]
+		pointsPowers[i][0] = points[i+precompNumPoints]
 		for j := 1; j < len(pointsPowers[i]); j++ {
 			pointsPowers[i][j].ScalarMul(&pointsPowers[i][j-1], &frQ)
 		}
@@ -49,19 +54,19 @@ func New(points []PointAffine, windowSize int) (*MSMFixedBasis, error) {
 
 	// Precomputed table.
 	var specialWindow fr.Element
-	specialWindow.SetUint64(1 << 16)
-	var firstFivePrecomp [5][16][1 << 16]PointAffine
+	specialWindow.SetUint64(1 << precompWindowSize)
+	var firstFivePrecomp [precompNumPoints][precompNumWindows][1 << precompWindowSize]PointAffine
 	group, _ := errgroup.WithContext(context.Background())
 	group.SetLimit(runtime.NumCPU())
-	for pointIdx := 0; pointIdx < 5; pointIdx++ {
+	for pointIdx := 0; pointIdx < precompNumPoints; pointIdx++ {
 		p := points[pointIdx]
-		for windowIdx := 0; windowIdx < 16; windowIdx++ {
+		for windowIdx := 0; windowIdx < precompNumWindows; windowIdx++ {
 			pointIdx := pointIdx
 			windowIdx := windowIdx
 			base := p
 			group.Go(func() error {
 				curr := base
-				for j := 1; j < 1<<16; j++ {
+				for j := 1; j < 1<<precompWindowSize; j++ {
 					firstFivePrecomp[pointIdx][windowIdx][j] = curr
 					curr.Add(&curr, &base)
 				}
@@ -84,16 +89,16 @@ func New(points []PointAffine, windowSize int) (*MSMFixedBasis, error) {
 
 func (msm *MSMFixedBasis) MSM(scalars []fr.Element) (PointProj, error) {
 	// Check that scalar length matches points length.
-	if len(scalars) > numPrecomputedPoints+pipperMsmLength {
+	if len(scalars) > precompNumPoints+pipperMsmLength {
 		return PointProj{}, errors.New("more scalars than accepted")
 	}
 
-	if len(scalars) <= numPrecomputedPoints {
+	if len(scalars) <= precompNumPoints {
 		return msm.msmPrecomp(scalars), nil
 	}
 
-	precompRes := msm.msmPrecomp(scalars[:numPrecomputedPoints])
-	pipperRes := msm.msmPipper(scalars[numPrecomputedPoints:])
+	precompRes := msm.msmPrecomp(scalars[:precompNumPoints])
+	pipperRes := msm.msmPipper(scalars[precompNumPoints:])
 	return *precompRes.Add(&precompRes, &pipperRes), nil
 }
 
@@ -104,12 +109,13 @@ func (msm *MSMFixedBasis) msmPrecomp(scalars []fr.Element) PointProj {
 	for k, scalar := range scalars {
 		scalar.FromMont()
 		for l := 0; l < fr.Limbs; l++ {
-			for i := 0; i < 4; i++ {
-				window := (scalar[l] >> (16 * i)) & 0xFFFF
+			const numWindowsInLimb = 64 / precompWindowSize
+			for i := 0; i < numWindowsInLimb; i++ {
+				window := (scalar[l] >> (precompWindowSize * i)) & ((1 << precompWindowSize) - 1)
 				if window == 0 {
 					continue
 				}
-				res.MixedAdd(&res, &msm.firstFivePrecomp[k][4*l+i][window])
+				res.MixedAdd(&res, &msm.firstFivePrecomp[k][l*numWindowsInLimb+i][window])
 			}
 		}
 	}
