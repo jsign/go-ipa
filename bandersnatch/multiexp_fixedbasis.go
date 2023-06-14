@@ -2,6 +2,7 @@ package bandersnatch
 
 import (
 	"errors"
+	"runtime"
 	"sync"
 
 	"github.com/crate-crypto/go-ipa/bandersnatch/fr"
@@ -58,8 +59,11 @@ func (msm *MSMFixedBasis) MSM(scalars []fr.Element) (PointProj, error) {
 		return PointProj{}, errors.New("more scalars than accepted")
 	}
 
-	const workPerRoutine = 16
+	const workPerRoutine = 8
 	count := (len(scalars) + workPerRoutine - 1) / workPerRoutine
+	if count > runtime.NumCPU() {
+		count = runtime.NumCPU()
+	}
 	results := make(chan PointProj, count)
 
 	var wg sync.WaitGroup

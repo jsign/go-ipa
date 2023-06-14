@@ -351,3 +351,15 @@ func elements_to_affine(points []Element) []bandersnatch.PointAffine {
 
 	return affine_points
 }
+
+func GetAffinePoints(points []Element) []bandersnatch.PointAffine {
+	affine_points := make([]bandersnatch.PointAffine, len(points))
+
+	for index, point := range points {
+		var affine bandersnatch.PointAffine
+		affine.FromProj(&point.inner)
+		affine_points[index] = affine
+	}
+
+	return affine_points
+}

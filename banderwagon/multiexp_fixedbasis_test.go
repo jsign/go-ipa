@@ -66,9 +66,9 @@ func BenchmarkCustomMSM(b *testing.B) {
 		scalars[i].SetRandom()
 	}
 	for _, k := range msmLength {
-		b.Run(fmt.Sprintf("size=%d", k), func(b *testing.B) {
+		b.Run(fmt.Sprintf("msm_length=%d", k), func(b *testing.B) {
 			for _, w := range windowSize {
-				b.Run(fmt.Sprintf("w=%d", w), func(b *testing.B) {
+				b.Run(fmt.Sprintf("window_size=%d", w), func(b *testing.B) {
 					msmEngine, _ := bandersnatch.New(points, w)
 
 					b.ReportAllocs()
@@ -81,25 +81,6 @@ func BenchmarkCustomMSM(b *testing.B) {
 		})
 	}
 }
-
-// func BenchmarkMSMPrecomp(b *testing.B) {
-// 	config := ipa.NewIPASettings()
-// 	pl := banderwagon.NewPrecomputeLagrange(config.SRSPrecompPoints.SRS)
-
-// 	for _, k := range []int{1, 2, 4, 8, 16, 32, 64, 128, 256} {
-// 		b.Run(fmt.Sprintf("for %d elements", k), func(b *testing.B) {
-// 			evals := make([]fr.Element, k)
-// 			for i := range evals {
-// 				evals[i].SetRandom()
-// 			}
-
-// 			b.ResetTimer()
-// 			for i := 0; i < b.N; i++ {
-// 				pl.Commit(evals)
-// 			}
-// 		})
-// 	}
-// }
 
 func GenerateRandomPoints(numPoints uint64) []bandersnatch.PointAffine {
 	seed := "eth_verkle_oct_2021"
