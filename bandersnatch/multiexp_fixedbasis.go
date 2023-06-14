@@ -3,6 +3,7 @@ package bandersnatch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"runtime"
 
 	"github.com/crate-crypto/go-ipa/bandersnatch/fr"
@@ -33,7 +34,7 @@ type MSMFixedBasis struct {
 
 func New(points []PointAffine, windowSize int) (*MSMFixedBasis, error) {
 	if len(points) > precompNumPoints+pipperMsmLength {
-		return nil, errors.New("max msm length is 256")
+		return nil, fmt.Errorf("max msm length is %d", precompNumPoints+pipperMsmLength)
 	}
 	if windowSize > fieldSizeBits {
 		return nil, errors.New("c must be less than field size")
@@ -123,21 +124,21 @@ func (msm *MSMFixedBasis) msmPrecomp(scalars []fr.Element) PointProj {
 }
 
 func (msm *MSMFixedBasis) msmPipper(scalars []fr.Element) PointProj {
-	const workPerRoutine = 8
-	count := (len(scalars) + workPerRoutine - 1) / workPerRoutine
-	if count > runtime.NumCPU() {
-		count = runtime.NumCPU()
+	const minWorkPerRoutine = 8
+	batches := (len(scalars) + minWorkPerRoutine - 1) / minWorkPerRoutine
+	if batches > runtime.NumCPU() {
+		batches = runtime.NumCPU()
 	}
-	results := make(chan PointProj, count)
+	results := make(chan PointProj, batches)
 
-	for i := 1; i < count; i++ {
-		points := msm.pointsPowers[i*len(scalars)/count : (i+1)*len(scalars)/count]
-		scalars := scalars[i*len(scalars)/count : (i+1)*len(scalars)/count]
-		go msm.doWork(points, scalars, results)
+	for i := 1; i < batches; i++ {
+		start := i * len(scalars) / batches
+		end := (i + 1) * len(scalars) / batches
+		go msm.doWork(msm.pointsPowers[start:end], scalars[start:end], results)
 	}
-	msm.doWork(msm.pointsPowers[:len(scalars)/count], scalars[:len(scalars)/count], results)
+	msm.doWork(msm.pointsPowers[:len(scalars)/batches], scalars[:len(scalars)/batches], results)
 	result := <-results
-	for i := 1; i < count; i++ {
+	for i := 1; i < batches; i++ {
 		res := <-results
 		result.Add(&result, &res)
 	}

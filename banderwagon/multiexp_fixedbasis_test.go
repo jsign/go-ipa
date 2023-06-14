@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/crate-crypto/go-ipa/bandersnatch"
 	"github.com/crate-crypto/go-ipa/bandersnatch/fp"
@@ -15,43 +14,41 @@ import (
 func TestCorrectness(t *testing.T) {
 	t.Parallel()
 
-	msmLength := 256
-	points := GenerateRandomPoints(uint64(msmLength))
+	for _, msmLength := range []int{5, 6, 8, 10, 16, 19, 32, 64, 128, 256} {
+		points := GenerateRandomPoints(uint64(msmLength))
 
-	windowSize := []int{2, 4, 8}
-	for _, w := range windowSize {
-		for i := 0; i < 10; i++ {
-			// Generate random scalars.
-			scalars := make([]fr.Element, msmLength)
-			for i := 0; i < len(scalars); i++ {
-				scalars[i].SetRandom()
-			}
-
-			// MSM custom result.
+		windowSize := []int{4, 8}
+		for _, w := range windowSize {
 			msmEngine, err := bandersnatch.New(points, w)
 			if err != nil {
 				t.Fatalf("error in msm engine: %v", err)
 			}
-			now := time.Now()
-			result, err := msmEngine.MSM(scalars)
-			if err != nil {
-				t.Fatalf("error in msm multiexp: %v", err)
-			}
-			fmt.Printf("jsign impl %v\n", time.Since(now))
+			for i := 0; i < 10; i++ {
+				// Generate random scalars.
+				scalars := make([]fr.Element, msmLength)
+				for i := 0; i < len(scalars); i++ {
+					scalars[i].SetRandom()
+				}
 
-			// Gnark result.
-			var gnarkResult bandersnatch.PointProj
-			now = time.Now()
-			_, err = gnarkResult.MultiExp(points, scalars, bandersnatch.MultiExpConfig{ScalarsMont: true})
-			if err != nil {
-				t.Fatalf("error in gnark multiexp: %v", err)
-			}
-			fmt.Printf("gnark impl %v\n\n", time.Since(now))
+				// MSM custom result.
+				result, err := msmEngine.MSM(scalars)
+				if err != nil {
+					t.Fatalf("error in msm multiexp: %v", err)
+				}
 
-			if !result.Equal(&gnarkResult) {
-				t.Fatalf("msm result does not match gnark result")
+				// Gnark result.
+				var gnarkResult bandersnatch.PointProj
+				_, err = gnarkResult.MultiExp(points, scalars, bandersnatch.MultiExpConfig{ScalarsMont: true})
+				if err != nil {
+					t.Fatalf("error in gnark multiexp: %v", err)
+				}
+
+				if !result.Equal(&gnarkResult) {
+					t.Fatalf("msm result does not match gnark result")
+				}
 			}
 		}
+		fmt.Printf("Correct for msm length %d\n", msmLength)
 	}
 }
 
