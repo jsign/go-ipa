@@ -27,7 +27,7 @@ func BenchmarkCompare(b *testing.B) {
 
 		b.Run(fmt.Sprintf("msm_length=%d", k), func(b *testing.B) {
 			b.Run("custom", func(b *testing.B) {
-				msmEngine, _ := bandersnatch.New(points, 4)
+				msmEngine, _ := bandersnatch.New(points, 8)
 
 				b.ReportAllocs()
 				b.ResetTimer()

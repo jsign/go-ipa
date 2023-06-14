@@ -51,14 +51,14 @@ func TestCorrectness(t *testing.T) {
 			if !result.Equal(&gnarkResult) {
 				t.Fatalf("msm result does not match gnark result")
 			}
-			_ = result
 		}
 	}
 }
 
 func BenchmarkCustomMSM(b *testing.B) {
-	windowSize := []int{2, 4, 8}
+	windowSize := []int{4, 8}
 	msmLength := []int{1, 2, 4, 8, 16, 32, 64, 128, 256}
+
 	points := GenerateRandomPoints(256)
 	// Generate random scalars.
 	scalars := make([]fr.Element, len(points))
