@@ -29,7 +29,7 @@ type MSMFixedBasis struct {
 
 	// pointsPowers are the pointsPowers with their powers. pointsPowers[i][j] = pointsPowers[i] * 2^(windowSize * j).
 	pointsPowers     [pipperMsmLength][]PointAffine
-	firstFivePrecomp [precompNumPoints][precompNumWindows][1 << precompWindowSize]PointAffine
+	firstFivePrecomp [precompNumPoints][precompNumWindows][1<<(precompWindowSize-1) + 1]PointAffine
 }
 
 func New(points []PointAffine, windowSize int) (*MSMFixedBasis, error) {
@@ -56,18 +56,18 @@ func New(points []PointAffine, windowSize int) (*MSMFixedBasis, error) {
 	// Precomputed table.
 	var specialWindow fr.Element
 	specialWindow.SetUint64(1 << precompWindowSize)
-	var firstFivePrecomp [precompNumPoints][precompNumWindows][1 << precompWindowSize]PointAffine
+	var firstFivePrecomp [precompNumPoints][precompNumWindows][1<<(precompWindowSize-1) + 1]PointAffine
 	group, _ := errgroup.WithContext(context.Background())
 	group.SetLimit(runtime.NumCPU())
 	for pointIdx := 0; pointIdx < precompNumPoints; pointIdx++ {
 		p := points[pointIdx]
-		for windowIdx := 0; windowIdx < precompNumWindows; windowIdx++ {
+		for windowIdx := 0; windowIdx < len(firstFivePrecomp[pointIdx]); windowIdx++ {
 			pointIdx := pointIdx
 			windowIdx := windowIdx
 			base := p
 			group.Go(func() error {
 				curr := base
-				for j := 1; j < 1<<precompWindowSize; j++ {
+				for j := 1; j < len(firstFivePrecomp[pointIdx][windowIdx]); j++ {
 					firstFivePrecomp[pointIdx][windowIdx][j] = curr
 					curr.Add(&curr, &base)
 				}
@@ -109,14 +109,26 @@ func (msm *MSMFixedBasis) msmPrecomp(scalars []fr.Element) PointProj {
 
 	for k, scalar := range scalars {
 		scalar.FromMont()
+		var carry uint64
+
+		var pNeg PointAffine
 		for l := 0; l < fr.Limbs; l++ {
 			const numWindowsInLimb = 64 / precompWindowSize
 			for i := 0; i < numWindowsInLimb; i++ {
-				window := (scalar[l] >> (precompWindowSize * i)) & ((1 << precompWindowSize) - 1)
-				if window == 0 {
+				windowValue := (scalar[l]>>(precompWindowSize*i))&((1<<precompWindowSize)-1) + carry
+				carry = 0
+				if windowValue == 0 {
 					continue
 				}
-				res.MixedAdd(&res, &msm.firstFivePrecomp[k][l*numWindowsInLimb+i][window])
+				if windowValue >= (1 << (precompWindowSize - 1)) {
+					windowValue = windowValue - (1 << precompWindowSize)
+					pNeg.Neg(&msm.firstFivePrecomp[k][l*numWindowsInLimb+i][-windowValue])
+					res.MixedAdd(&res, &pNeg)
+					carry = 1
+				} else {
+					res.MixedAdd(&res, &msm.firstFivePrecomp[k][l*numWindowsInLimb+i][windowValue])
+				}
+				//res.MixedAdd(&res, &msm.firstFivePrecomp[k][l*numWindowsInLimb+i][window])
 			}
 		}
 	}
