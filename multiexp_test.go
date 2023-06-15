@@ -27,12 +27,23 @@ func BenchmarkCompare(b *testing.B) {
 
 		b.Run(fmt.Sprintf("msm_length=%d", k), func(b *testing.B) {
 			b.Run("custom", func(b *testing.B) {
-				msmEngine, _ := bandersnatch.New(points, 8)
+				for _, w := range []int{4, 8} {
+					b.Run("window_size="+fmt.Sprintf("%d", w), func(b *testing.B) {
+						msmEngine, _ := bandersnatch.New(points, w)
 
+						b.ReportAllocs()
+						b.ResetTimer()
+						for i := 0; i < b.N; i++ {
+							_, _ = msmEngine.MSM(scalars[:k])
+						}
+					})
+				}
+			})
+			b.Run("precomp", func(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					_, _ = msmEngine.MSM(scalars[:k])
+					pl.Commit(scalarsBench[:k])
 				}
 			})
 			b.Run("gnark", func(b *testing.B) {
@@ -43,13 +54,7 @@ func BenchmarkCompare(b *testing.B) {
 					_, _ = gnarkResult.MultiExp(points, scalarsBench, bandersnatch.MultiExpConfig{ScalarsMont: true})
 				}
 			})
-			b.Run("precomp", func(b *testing.B) {
-				b.ReportAllocs()
-				b.ResetTimer()
-				for i := 0; i < b.N; i++ {
-					pl.Commit(scalarsBench[:k])
-				}
-			})
+
 		})
 	}
 }
