@@ -6,10 +6,8 @@ import (
 )
 
 type PrecompPoint struct {
-	numWindows   int
-	windowLength int
-
-	windows [][]bandersnatch.PointAffine
+	windowSize int
+	windows    [][]bandersnatch.PointAffine
 }
 
 func NewPrecompPoint(point bandersnatch.PointAffine, windowSize int) PrecompPoint {
@@ -17,16 +15,13 @@ func NewPrecompPoint(point bandersnatch.PointAffine, windowSize int) PrecompPoin
 	specialWindow.SetUint64(1 << windowSize)
 
 	res := PrecompPoint{
-		numWindows:   256 / precompWindowSize,
-		windowLength: 1<<(windowSize-1) + 1,
-		windows:      make([][]bandersnatch.PointAffine, 256/precompWindowSize),
+		windowSize: windowSize,
+		windows:    make([][]bandersnatch.PointAffine, 256/precompWindowSize),
 	}
 	for i := 0; i < len(res.windows); i++ {
-		res.windows[i] = make([]bandersnatch.PointAffine, res.windowLength)
-		res.windows[i][0].Identity()
-
+		res.windows[i] = make([]bandersnatch.PointAffine, 1<<(windowSize-1))
 		curr := point
-		for j := 1; j < len(res.windows[i]); j++ {
+		for j := 0; j < len(res.windows[i]); j++ {
 			res.windows[i][j] = curr
 			curr.Add(&curr, &point)
 		}
@@ -37,25 +32,28 @@ func NewPrecompPoint(point bandersnatch.PointAffine, windowSize int) PrecompPoin
 }
 
 func (pp *PrecompPoint) ScalarMul(scalar fr.Element, res *bandersnatch.PointProj) {
+	numWindowsInLimb := 64 / pp.windowSize
+
 	scalar.FromMont()
 	var carry uint64
-
 	var pNeg bandersnatch.PointAffine
 	for l := 0; l < fr.Limbs; l++ {
-		const numWindowsInLimb = 64 / precompWindowSize
 		for w := 0; w < numWindowsInLimb; w++ {
-			windowValue := (scalar[l]>>(precompWindowSize*w))&((1<<precompWindowSize)-1) + carry
-			carry = 0
+			windowValue := (scalar[l]>>(pp.windowSize*w))&((1<<pp.windowSize)-1) + carry
 			if windowValue == 0 {
 				continue
 			}
-			if windowValue >= 1<<(precompWindowSize-1) {
-				windowValue = (1 << precompWindowSize) - windowValue
-				pNeg.Neg(&pp.windows[l*numWindowsInLimb+w][windowValue])
-				res.MixedAdd(res, &pNeg)
+			carry = 0
+
+			if windowValue > 1<<(pp.windowSize-1) {
+				windowValue = (1 << pp.windowSize) - windowValue
+				if windowValue != 0 {
+					pNeg.Neg(&pp.windows[l*numWindowsInLimb+w][windowValue-1])
+					res.MixedAdd(res, &pNeg)
+				}
 				carry = 1
 			} else {
-				res.MixedAdd(res, &pp.windows[l*numWindowsInLimb+w][windowValue])
+				res.MixedAdd(res, &pp.windows[l*numWindowsInLimb+w][windowValue-1])
 			}
 		}
 	}

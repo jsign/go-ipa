@@ -140,10 +140,10 @@ func (msm *MSMFixedBasis) doWork(points [][]bandersnatch.PointAffine, scalars []
 		for limbIndex := 0; limbIndex < fr.Limbs; limbIndex++ {
 			for w := 0; w < 64/msm.windowSize; w++ {
 				windowValue := int(scalar[limbIndex]>>(w*msm.windowSize))&msm.windowMask + carry
-				carry = 0
 				if windowValue == 0 {
 					continue
 				}
+				carry = 0
 
 				if windowValue >= (1 << (msm.windowSize - 1)) {
 					windowValue = windowValue - (1 << msm.windowSize)
