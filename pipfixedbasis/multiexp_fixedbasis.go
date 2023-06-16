@@ -29,8 +29,8 @@ type MSMFixedBasis struct {
 	numWindows int
 
 	// pointsPowers are the pointsPowers with their powers. pointsPowers[i][j] = pointsPowers[i] * 2^(windowSize * j).
-	pointsPowers     [pipperMsmLength][]bandersnatch.PointAffine
-	firstFivePrecomp [precompNumPoints][precompNumWindows][1<<(precompWindowSize-1) + 1]bandersnatch.PointAffine
+	pointsPowers  [pipperMsmLength][]bandersnatch.PointAffine
+	precompPoints [precompNumPoints]PrecompPoint
 }
 
 func New(points []bandersnatch.PointAffine, windowSize int) (*MSMFixedBasis, error) {
@@ -55,28 +55,15 @@ func New(points []bandersnatch.PointAffine, windowSize int) (*MSMFixedBasis, err
 	}
 
 	// Precomputed table.
-	var specialWindow fr.Element
-	specialWindow.SetUint64(1 << precompWindowSize)
-	var firstFivePrecomp [precompNumPoints][precompNumWindows][1<<(precompWindowSize-1) + 1]bandersnatch.PointAffine
 	group, _ := errgroup.WithContext(context.Background())
 	group.SetLimit(runtime.NumCPU())
-	for pointIdx := 0; pointIdx < precompNumPoints; pointIdx++ {
-		p := points[pointIdx]
-		for windowIdx := 0; windowIdx < len(firstFivePrecomp[pointIdx]); windowIdx++ {
-			pointIdx := pointIdx
-			windowIdx := windowIdx
-			base := p
-			group.Go(func() error {
-				curr := base
-				firstFivePrecomp[pointIdx][windowIdx][0].Identity()
-				for j := 1; j < len(firstFivePrecomp[pointIdx][windowIdx]); j++ {
-					firstFivePrecomp[pointIdx][windowIdx][j] = curr
-					curr.Add(&curr, &base)
-				}
-				return nil
-			})
-			p.ScalarMul(&p, &specialWindow)
-		}
+	var precompPoints [precompNumPoints]PrecompPoint
+	for i := 0; i < precompNumPoints; i++ {
+		i := i
+		group.Go(func() error {
+			precompPoints[i] = NewPrecompPoint(points[i], precompWindowSize)
+			return nil
+		})
 	}
 	_ = group.Wait()
 
@@ -85,8 +72,8 @@ func New(points []bandersnatch.PointAffine, windowSize int) (*MSMFixedBasis, err
 		windowMask: (1 << windowSize) - 1,
 		numWindows: numWindows,
 
-		pointsPowers:     pointsPowers,
-		firstFivePrecomp: firstFivePrecomp,
+		pointsPowers:  pointsPowers,
+		precompPoints: precompPoints,
 	}, nil
 }
 
@@ -109,29 +96,8 @@ func (msm *MSMFixedBasis) msmPrecomp(scalars []fr.Element) bandersnatch.PointPro
 	var res bandersnatch.PointProj
 	res.Identity()
 
-	for k, scalar := range scalars {
-		scalar.FromMont()
-		var carry uint64
-
-		var pNeg bandersnatch.PointAffine
-		for l := 0; l < fr.Limbs; l++ {
-			const numWindowsInLimb = 64 / precompWindowSize
-			for w := 0; w < numWindowsInLimb; w++ {
-				windowValue := (scalar[l]>>(precompWindowSize*w))&((1<<precompWindowSize)-1) + carry
-				carry = 0
-				if windowValue == 0 {
-					continue
-				}
-				if windowValue >= 1<<(precompWindowSize-1) {
-					windowValue = (1 << precompWindowSize) - windowValue
-					pNeg.Neg(&msm.firstFivePrecomp[k][l*numWindowsInLimb+w][windowValue])
-					res.MixedAdd(&res, &pNeg)
-					carry = 1
-				} else {
-					res.MixedAdd(&res, &msm.firstFivePrecomp[k][l*numWindowsInLimb+w][windowValue])
-				}
-			}
-		}
+	for i := range scalars {
+		msm.precompPoints[i].ScalarMul(scalars[i], &res)
 	}
 	return res
 }
