@@ -68,6 +68,7 @@ func New(points []bandersnatch.PointAffine, windowSize int) (*MSMFixedBasis, err
 			base := p
 			group.Go(func() error {
 				curr := base
+				firstFivePrecomp[pointIdx][windowIdx][0].Identity()
 				for j := 1; j < len(firstFivePrecomp[pointIdx][windowIdx]); j++ {
 					firstFivePrecomp[pointIdx][windowIdx][j] = curr
 					curr.Add(&curr, &base)
@@ -115,21 +116,20 @@ func (msm *MSMFixedBasis) msmPrecomp(scalars []fr.Element) bandersnatch.PointPro
 		var pNeg bandersnatch.PointAffine
 		for l := 0; l < fr.Limbs; l++ {
 			const numWindowsInLimb = 64 / precompWindowSize
-			for i := 0; i < numWindowsInLimb; i++ {
-				windowValue := (scalar[l]>>(precompWindowSize*i))&((1<<precompWindowSize)-1) + carry
+			for w := 0; w < numWindowsInLimb; w++ {
+				windowValue := (scalar[l]>>(precompWindowSize*w))&((1<<precompWindowSize)-1) + carry
 				carry = 0
 				if windowValue == 0 {
 					continue
 				}
-				if windowValue >= (1 << (precompWindowSize - 1)) {
-					windowValue = windowValue - (1 << precompWindowSize)
-					pNeg.Neg(&msm.firstFivePrecomp[k][l*numWindowsInLimb+i][-windowValue])
+				if windowValue >= 1<<(precompWindowSize-1) {
+					windowValue = (1 << precompWindowSize) - windowValue
+					pNeg.Neg(&msm.firstFivePrecomp[k][l*numWindowsInLimb+w][windowValue])
 					res.MixedAdd(&res, &pNeg)
 					carry = 1
 				} else {
-					res.MixedAdd(&res, &msm.firstFivePrecomp[k][l*numWindowsInLimb+i][windowValue])
+					res.MixedAdd(&res, &msm.firstFivePrecomp[k][l*numWindowsInLimb+w][windowValue])
 				}
-				//res.MixedAdd(&res, &msm.firstFivePrecomp[k][l*numWindowsInLimb+i][window])
 			}
 		}
 	}
