@@ -1,4 +1,4 @@
-package bandersnatch
+package pipfixedbasis
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 
+	"github.com/crate-crypto/go-ipa/bandersnatch"
 	"github.com/crate-crypto/go-ipa/bandersnatch/fr"
 	"golang.org/x/sync/errgroup"
 )
@@ -28,11 +29,11 @@ type MSMFixedBasis struct {
 	numWindows int
 
 	// pointsPowers are the pointsPowers with their powers. pointsPowers[i][j] = pointsPowers[i] * 2^(windowSize * j).
-	pointsPowers     [pipperMsmLength][]PointAffine
-	firstFivePrecomp [precompNumPoints][precompNumWindows][1<<(precompWindowSize-1) + 1]PointAffine
+	pointsPowers     [pipperMsmLength][]bandersnatch.PointAffine
+	firstFivePrecomp [precompNumPoints][precompNumWindows][1<<(precompWindowSize-1) + 1]bandersnatch.PointAffine
 }
 
-func New(points []PointAffine, windowSize int) (*MSMFixedBasis, error) {
+func New(points []bandersnatch.PointAffine, windowSize int) (*MSMFixedBasis, error) {
 	if len(points) > precompNumPoints+pipperMsmLength {
 		return nil, fmt.Errorf("max msm length is %d", precompNumPoints+pipperMsmLength)
 	}
@@ -44,9 +45,9 @@ func New(points []PointAffine, windowSize int) (*MSMFixedBasis, error) {
 	// Compute the powers of the points.
 	var frQ fr.Element
 	frQ.SetUint64(1 << windowSize)
-	var pointsPowers [pipperMsmLength][]PointAffine
+	var pointsPowers [pipperMsmLength][]bandersnatch.PointAffine
 	for i := range points[precompNumPoints:] {
-		pointsPowers[i] = make([]PointAffine, numWindows)
+		pointsPowers[i] = make([]bandersnatch.PointAffine, numWindows)
 		pointsPowers[i][0] = points[i+precompNumPoints]
 		for j := 1; j < len(pointsPowers[i]); j++ {
 			pointsPowers[i][j].ScalarMul(&pointsPowers[i][j-1], &frQ)
@@ -56,7 +57,7 @@ func New(points []PointAffine, windowSize int) (*MSMFixedBasis, error) {
 	// Precomputed table.
 	var specialWindow fr.Element
 	specialWindow.SetUint64(1 << precompWindowSize)
-	var firstFivePrecomp [precompNumPoints][precompNumWindows][1<<(precompWindowSize-1) + 1]PointAffine
+	var firstFivePrecomp [precompNumPoints][precompNumWindows][1<<(precompWindowSize-1) + 1]bandersnatch.PointAffine
 	group, _ := errgroup.WithContext(context.Background())
 	group.SetLimit(runtime.NumCPU())
 	for pointIdx := 0; pointIdx < precompNumPoints; pointIdx++ {
@@ -88,10 +89,10 @@ func New(points []PointAffine, windowSize int) (*MSMFixedBasis, error) {
 	}, nil
 }
 
-func (msm *MSMFixedBasis) MSM(scalars []fr.Element) (PointProj, error) {
+func (msm *MSMFixedBasis) MSM(scalars []fr.Element) (bandersnatch.PointProj, error) {
 	// Check that scalar length matches points length.
 	if len(scalars) > precompNumPoints+pipperMsmLength {
-		return PointProj{}, errors.New("more scalars than accepted")
+		return bandersnatch.PointProj{}, errors.New("more scalars than accepted")
 	}
 
 	if len(scalars) <= precompNumPoints {
@@ -103,15 +104,15 @@ func (msm *MSMFixedBasis) MSM(scalars []fr.Element) (PointProj, error) {
 	return *precompRes.Add(&precompRes, &pipperRes), nil
 }
 
-func (msm *MSMFixedBasis) msmPrecomp(scalars []fr.Element) PointProj {
-	var res PointProj
+func (msm *MSMFixedBasis) msmPrecomp(scalars []fr.Element) bandersnatch.PointProj {
+	var res bandersnatch.PointProj
 	res.Identity()
 
 	for k, scalar := range scalars {
 		scalar.FromMont()
 		var carry uint64
 
-		var pNeg PointAffine
+		var pNeg bandersnatch.PointAffine
 		for l := 0; l < fr.Limbs; l++ {
 			const numWindowsInLimb = 64 / precompWindowSize
 			for i := 0; i < numWindowsInLimb; i++ {
@@ -135,13 +136,13 @@ func (msm *MSMFixedBasis) msmPrecomp(scalars []fr.Element) PointProj {
 	return res
 }
 
-func (msm *MSMFixedBasis) msmPipper(scalars []fr.Element) PointProj {
+func (msm *MSMFixedBasis) msmPipper(scalars []fr.Element) bandersnatch.PointProj {
 	const minWorkPerRoutine = 8
 	batches := (len(scalars) + minWorkPerRoutine - 1) / minWorkPerRoutine
 	if batches > runtime.NumCPU() {
 		batches = runtime.NumCPU()
 	}
-	results := make(chan PointProj, batches)
+	results := make(chan bandersnatch.PointProj, batches)
 
 	for i := 1; i < batches; i++ {
 		start := i * len(scalars) / batches
@@ -157,8 +158,8 @@ func (msm *MSMFixedBasis) msmPipper(scalars []fr.Element) PointProj {
 
 	return result
 }
-func (msm *MSMFixedBasis) doWork(points [][]PointAffine, scalars []fr.Element, results chan<- PointProj) {
-	var bucketz [1<<7 + 1]PointProj
+func (msm *MSMFixedBasis) doWork(points [][]bandersnatch.PointAffine, scalars []fr.Element, results chan<- bandersnatch.PointProj) {
+	var bucketz [1<<7 + 1]bandersnatch.PointProj
 	buckets := bucketz[:1<<(msm.windowSize-1)+1]
 
 	for i := 0; i < len(buckets); i++ {
@@ -169,7 +170,7 @@ func (msm *MSMFixedBasis) doWork(points [][]PointAffine, scalars []fr.Element, r
 		scalar.FromMont()
 		carry := 0
 
-		var pNeg PointAffine
+		var pNeg bandersnatch.PointAffine
 		for limbIndex := 0; limbIndex < fr.Limbs; limbIndex++ {
 			for w := 0; w < 64/msm.windowSize; w++ {
 				windowValue := int(scalar[limbIndex]>>(w*msm.windowSize))&msm.windowMask + carry
@@ -190,7 +191,7 @@ func (msm *MSMFixedBasis) doWork(points [][]PointAffine, scalars []fr.Element, r
 		}
 	}
 
-	var tmp, result PointProj
+	var tmp, result bandersnatch.PointProj
 	tmp.Identity()
 	result.Identity()
 	for k := len(buckets) - 1; k >= 1; k-- {
