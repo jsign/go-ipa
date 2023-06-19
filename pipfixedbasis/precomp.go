@@ -16,7 +16,7 @@ func NewPrecompPoint(point bandersnatch.PointAffine, windowSize int) PrecompPoin
 
 	res := PrecompPoint{
 		windowSize: windowSize,
-		windows:    make([][]bandersnatch.PointAffine, 256/precompWindowSize),
+		windows:    make([][]bandersnatch.PointAffine, 256/windowSize),
 	}
 	for i := 0; i < len(res.windows); i++ {
 		res.windows[i] = make([]bandersnatch.PointAffine, 1<<(windowSize-1))

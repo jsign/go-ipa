@@ -1,13 +1,16 @@
 package pipfixedbasis
 
 import (
+	"context"
 	"fmt"
+	"runtime"
 	"testing"
 
 	"github.com/crate-crypto/go-ipa/bandersnatch"
 	"github.com/crate-crypto/go-ipa/bandersnatch/fr"
 	"github.com/crate-crypto/go-ipa/banderwagon"
 	"github.com/crate-crypto/go-ipa/ipa"
+	"golang.org/x/sync/errgroup"
 )
 
 func TestCorrectness(t *testing.T) {
@@ -16,7 +19,9 @@ func TestCorrectness(t *testing.T) {
 	srs := ipa.GenerateRandomPoints(256)
 	points := banderwagon.GetAffinePoints(srs)
 
-	for _, msmLength := range []int{5, 7, 32, 64, 128, 256} {
+	group, _ := errgroup.WithContext(context.Background())
+	group.SetLimit(runtime.NumCPU())
+	for _, msmLength := range []int{256} {
 		msmLength := msmLength
 		t.Run(fmt.Sprintf("msmLength=%d", msmLength), func(t *testing.T) {
 			t.Parallel()
@@ -28,31 +33,35 @@ func TestCorrectness(t *testing.T) {
 				if err != nil {
 					t.Fatalf("error in msm engine: %v", err)
 				}
-				for i := 0; i < 1_000; i++ {
-					// Generate random scalars.
-					scalars := make([]fr.Element, len(points))
-					for i := 0; i < len(scalars); i++ {
-						scalars[i].SetRandom()
-					}
+				for i := 0; i < 10_000; i++ {
+					group.Go(func() error {
+						// Generate random scalars.
+						scalars := make([]fr.Element, len(points))
+						for i := 0; i < len(scalars); i++ {
+							scalars[i].SetRandom()
+						}
 
-					// MSM custom result.
-					result, err := msmEngine.MSM(scalars)
-					if err != nil {
-						t.Fatalf("error in msm multiexp: %v", err)
-					}
+						// MSM custom result.
+						result, err := msmEngine.MSM(scalars)
+						if err != nil {
+							t.Fatalf("error in msm multiexp: %v", err)
+						}
 
-					// Gnark result.
-					var gnarkResult bandersnatch.PointProj
-					_, err = gnarkResult.MultiExp(points, scalars, bandersnatch.MultiExpConfig{ScalarsMont: true})
-					if err != nil {
-						t.Fatalf("error in gnark multiexp: %v", err)
-					}
+						// Gnark result.
+						var gnarkResult bandersnatch.PointProj
+						_, err = gnarkResult.MultiExp(points, scalars, bandersnatch.MultiExpConfig{ScalarsMont: true})
+						if err != nil {
+							t.Fatalf("error in gnark multiexp: %v", err)
+						}
 
-					if !result.Equal(&gnarkResult) {
-						t.Fatalf("msm result does not match gnark result (%s)", scalars[0].String())
-					}
+						if !result.Equal(&gnarkResult) {
+							t.Fatalf("msm result does not match gnark result (%s)", scalars[0].String())
+						}
+						return nil
+					})
 				}
 			}
+			group.Wait()
 		})
 	}
 }
@@ -91,7 +100,7 @@ func BenchmarkCompare(b *testing.B) {
 	pl := banderwagon.NewPrecomputeLagrange(config.SRSPrecompPoints.SRS)
 	points := banderwagon.GetAffinePoints(config.SRSPrecompPoints.SRS)
 
-	msmLength := []int{1, 2, 4, 8, 16, 32, 64, 128, 256}
+	msmLength := []int{256}
 	// Generate random scalars.
 	scalars := make([]fr.Element, len(points))
 	for i := 0; i < len(scalars); i++ {

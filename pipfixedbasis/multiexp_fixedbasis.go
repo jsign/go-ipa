@@ -6,15 +6,14 @@ import (
 	"fmt"
 	"runtime"
 
+	"github.com/bits-and-blooms/bitset"
 	"github.com/crate-crypto/go-ipa/bandersnatch"
 	"github.com/crate-crypto/go-ipa/bandersnatch/fr"
 	"golang.org/x/sync/errgroup"
 )
 
 const (
-	precompNumPoints  = 5
-	precompWindowSize = 16
-	precompNumWindows = 256 / precompWindowSize
+	precompNumPoints = 256
 
 	pipperMsmLength = 256 - precompNumPoints
 	fieldSizeBits   = 256
@@ -61,7 +60,11 @@ func New(points []bandersnatch.PointAffine, windowSize int) (*MSMFixedBasis, err
 	for i := 0; i < precompNumPoints; i++ {
 		i := i
 		group.Go(func() error {
-			precompPoints[i] = NewPrecompPoint(points[i], precompWindowSize)
+			if i < 5 {
+				precompPoints[i] = NewPrecompPoint(points[i], 16)
+			} else {
+				precompPoints[i] = NewPrecompPoint(points[i], 8)
+			}
 			return nil
 		})
 	}
@@ -96,15 +99,65 @@ func (msm *MSMFixedBasis) msmPrecomp(scalars []fr.Element) bandersnatch.PointPro
 	var res bandersnatch.PointProj
 	res.Identity()
 
+	set := bitset.New(uint(len(scalars)))
 	for i := range scalars {
-		msm.precompPoints[i].ScalarMul(scalars[i], &res)
+		if !scalars[i].IsZero() {
+			set.Set(uint(i))
+		}
 	}
-	return res
+
+	minScalarsPerRoutine := 4
+	if int(set.Count()) <= minScalarsPerRoutine {
+		for i := range scalars {
+			if set.Test(uint(i)) {
+				msm.precompPoints[i].ScalarMul(scalars[i], &res)
+			}
+		}
+		return res
+	}
+
+	numBatches := (int(set.Count()) + minScalarsPerRoutine - 1) / minScalarsPerRoutine
+	if numBatches > runtime.NumCPU() {
+		numBatches = runtime.NumCPU()
+	}
+	batchSize := (int(set.Count()) + numBatches - 1) / numBatches
+
+	results := make(chan bandersnatch.PointProj, numBatches)
+	for start := 0; start < len(scalars); {
+		end := start
+		size := 0
+		for size < batchSize && end < len(scalars) {
+			if set.Test(uint(end)) {
+				size++
+			}
+			end++
+		}
+		go func(start, end int) {
+			var res bandersnatch.PointProj
+			res.Identity()
+			for i := start; i < end; i++ {
+				if set.Test(uint(i)) {
+					msm.precompPoints[i].ScalarMul(scalars[i], &res)
+				}
+			}
+			results <- res
+		}(start, end)
+		start = end
+	}
+
+	var result bandersnatch.PointProj
+	result.Identity()
+	for i := 0; i < numBatches; i++ {
+		res := <-results
+		result.Add(&result, &res)
+	}
+
+	return result
 }
 
 func (msm *MSMFixedBasis) msmPipper(scalars []fr.Element) bandersnatch.PointProj {
-	const minWorkPerRoutine = 8
-	batches := (len(scalars) + minWorkPerRoutine - 1) / minWorkPerRoutine
+	const minScalarsPerRoutine = 8
+	batches := (len(scalars) + minScalarsPerRoutine - 1) / minScalarsPerRoutine
 	if batches > runtime.NumCPU() {
 		batches = runtime.NumCPU()
 	}
@@ -133,6 +186,10 @@ func (msm *MSMFixedBasis) doWork(points [][]bandersnatch.PointAffine, scalars []
 	}
 
 	for i, scalar := range scalars {
+		if scalar.IsZero() {
+			continue
+		}
+
 		scalar.FromMont()
 		carry := 0
 
