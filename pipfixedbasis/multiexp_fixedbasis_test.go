@@ -67,8 +67,8 @@ func TestCorrectness(t *testing.T) {
 }
 
 func BenchmarkCustomMSM(b *testing.B) {
-	windowSize := []int{4, 8}
-	msmLength := []int{1, 2, 4, 8, 16, 32, 64, 128, 256}
+	windowSize := []int{8}
+	msmLength := []int{1}
 
 	srs := ipa.GenerateRandomPoints(256)
 	points := banderwagon.GetAffinePoints(srs)
@@ -100,7 +100,7 @@ func BenchmarkCompare(b *testing.B) {
 	pl := banderwagon.NewPrecomputeLagrange(config.SRSPrecompPoints.SRS)
 	points := banderwagon.GetAffinePoints(config.SRSPrecompPoints.SRS)
 
-	msmLength := []int{256}
+	msmLength := []int{1, 4, 8, 16, 32, 64, 128, 256}
 	// Generate random scalars.
 	scalars := make([]fr.Element, len(points))
 	for i := 0; i < len(scalars); i++ {
@@ -111,20 +111,20 @@ func BenchmarkCompare(b *testing.B) {
 		copy(scalarsBench, scalars[:k])
 
 		b.Run(fmt.Sprintf("msm_length=%d", k), func(b *testing.B) {
-			b.Run("custom", func(b *testing.B) {
-				for _, w := range []int{4, 8} {
-					b.Run("window_size="+fmt.Sprintf("%d", w), func(b *testing.B) {
-						msmEngine, _ := New(points, w)
+			b.Run("faster precomp", func(b *testing.B) {
+				// for _, w := range []int{4, 8} {
+				// b.Run("window_size="+fmt.Sprintf("%d", w), func(b *testing.B) {
+				msmEngine, _ := New(points, 8)
 
-						b.ReportAllocs()
-						b.ResetTimer()
-						for i := 0; i < b.N; i++ {
-							_, _ = msmEngine.MSM(scalars[:k])
-						}
-					})
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					_, _ = msmEngine.MSM(scalars[:k])
 				}
+				// })
+				// }
 			})
-			b.Run("precomp", func(b *testing.B) {
+			b.Run("current precomp", func(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {

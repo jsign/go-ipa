@@ -1,8 +1,12 @@
 package pipfixedbasis
 
 import (
+	"context"
+	"runtime"
+
 	"github.com/crate-crypto/go-ipa/bandersnatch"
 	"github.com/crate-crypto/go-ipa/bandersnatch/fr"
+	"golang.org/x/sync/errgroup"
 )
 
 type PrecompPoint struct {
@@ -18,15 +22,23 @@ func NewPrecompPoint(point bandersnatch.PointAffine, windowSize int) PrecompPoin
 		windowSize: windowSize,
 		windows:    make([][]bandersnatch.PointAffine, 256/windowSize),
 	}
+	group, _ := errgroup.WithContext(context.Background())
+	group.SetLimit(runtime.NumCPU())
 	for i := 0; i < len(res.windows); i++ {
-		res.windows[i] = make([]bandersnatch.PointAffine, 1<<(windowSize-1))
-		curr := point
-		for j := 0; j < len(res.windows[i]); j++ {
-			res.windows[i][j] = curr
-			curr.Add(&curr, &point)
-		}
+		i := i
+		base := point
+		group.Go(func() error {
+			res.windows[i] = make([]bandersnatch.PointAffine, 1<<(windowSize-1))
+			curr := base
+			for j := 0; j < len(res.windows[i]); j++ {
+				res.windows[i][j] = curr
+				curr.Add(&curr, &base)
+			}
+			return nil
+		})
 		point.ScalarMul(&point, &specialWindow)
 	}
+	_ = group.Wait()
 
 	return res
 }

@@ -1,15 +1,12 @@
 package pipfixedbasis
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"runtime"
 
-	"github.com/bits-and-blooms/bitset"
 	"github.com/crate-crypto/go-ipa/bandersnatch"
 	"github.com/crate-crypto/go-ipa/bandersnatch/fr"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -54,21 +51,14 @@ func New(points []bandersnatch.PointAffine, windowSize int) (*MSMFixedBasis, err
 	}
 
 	// Precomputed table.
-	group, _ := errgroup.WithContext(context.Background())
-	group.SetLimit(runtime.NumCPU())
 	var precompPoints [precompNumPoints]PrecompPoint
 	for i := 0; i < precompNumPoints; i++ {
-		i := i
-		group.Go(func() error {
-			if i < 5 {
-				precompPoints[i] = NewPrecompPoint(points[i], 16)
-			} else {
-				precompPoints[i] = NewPrecompPoint(points[i], 8)
-			}
-			return nil
-		})
+		if i <= 4 {
+			precompPoints[i] = NewPrecompPoint(points[i], 16)
+		} else {
+			precompPoints[i] = NewPrecompPoint(points[i], 8)
+		}
 	}
-	_ = group.Wait()
 
 	return &MSMFixedBasis{
 		windowSize: windowSize,
@@ -99,49 +89,49 @@ func (msm *MSMFixedBasis) msmPrecomp(scalars []fr.Element) bandersnatch.PointPro
 	var res bandersnatch.PointProj
 	res.Identity()
 
-	set := bitset.New(uint(len(scalars)))
+	nonZeroScalars := bitset{}
 	for i := range scalars {
 		if !scalars[i].IsZero() {
-			set.Set(uint(i))
+			nonZeroScalars.set(i)
 		}
 	}
 
-	minScalarsPerRoutine := 4
-	if int(set.Count()) <= minScalarsPerRoutine {
+	minScalarsPerRoutine := 8
+	if nonZeroScalars.count <= minScalarsPerRoutine {
 		for i := range scalars {
-			if set.Test(uint(i)) {
+			if nonZeroScalars.test(i) {
 				msm.precompPoints[i].ScalarMul(scalars[i], &res)
 			}
 		}
 		return res
 	}
 
-	numBatches := (int(set.Count()) + minScalarsPerRoutine - 1) / minScalarsPerRoutine
+	numBatches := (nonZeroScalars.count + minScalarsPerRoutine - 1) / minScalarsPerRoutine
 	if numBatches > runtime.NumCPU() {
 		numBatches = runtime.NumCPU()
 	}
-	batchSize := (int(set.Count()) + numBatches - 1) / numBatches
+	batchSize := (nonZeroScalars.count + numBatches - 1) / numBatches
 
 	results := make(chan bandersnatch.PointProj, numBatches)
 	for start := 0; start < len(scalars); {
 		end := start
 		size := 0
 		for size < batchSize && end < len(scalars) {
-			if set.Test(uint(end)) {
+			if nonZeroScalars.test(end) {
 				size++
 			}
 			end++
 		}
-		go func(start, end int) {
+		go func(start, end int, nonZeroScalars bitset) {
 			var res bandersnatch.PointProj
 			res.Identity()
 			for i := start; i < end; i++ {
-				if set.Test(uint(i)) {
+				if nonZeroScalars.test(i) {
 					msm.precompPoints[i].ScalarMul(scalars[i], &res)
 				}
 			}
 			results <- res
-		}(start, end)
+		}(start, end, nonZeroScalars)
 		start = end
 	}
 
@@ -224,4 +214,18 @@ func (msm *MSMFixedBasis) doWork(points [][]bandersnatch.PointAffine, scalars []
 		result.Add(&result, &tmp)
 	}
 	results <- result
+}
+
+type bitset struct {
+	words [4]uint64
+	count int
+}
+
+func (b *bitset) set(i int) {
+	b.words[i/64] |= 1 << (uint(i) % 64)
+	b.count++
+}
+
+func (b *bitset) test(i int) bool {
+	return b.words[i/64]&(1<<(uint(i)%64)) != 0
 }
