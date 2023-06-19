@@ -67,6 +67,7 @@ func TestCorrectness(t *testing.T) {
 }
 
 func BenchmarkCustomMSM(b *testing.B) {
+	b.SkipNow()
 	windowSize := []int{8}
 	msmLength := []int{1}
 
